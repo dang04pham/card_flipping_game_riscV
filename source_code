@@ -1,0 +1,357 @@
+#----------------main_idea----------------
+#maintain an arrays of color, each type of color will occupy 2 consecutive index
+#their indexes corresponds to the randome positions in the "pos" array
+#step 1: Set up the position array using a subroutine
+
+.eqv IN_ADDRESS_HEXA_KEYBOARD       0xFFFF0012  
+.eqv OUT_ADDRESS_HEXA_KEYBOARD      0xFFFF0014
+.eqv MONITOR_SCREEN 	0x10010000 # monitor screen address
+.eqv BLACK 		0x00000000 # black
+.eqv RED 		0x00FF0000 # red
+.eqv GREEN 		0x0000FF00 # green
+.eqv BLUE 		0x000000FF # blue
+.eqv WHITE 		0x00FFFFFF # white
+.eqv YELLOW		0x00FFFF00 # yellow
+.eqv CYAN		0xFF00FFFF # cyan
+.eqv PURPLE		0xFF800080 # purple
+.eqv GREY		0xFF808080 # grey
+
+.data
+# message for exit
+msg: .asciz "Do you want to play again ?"
+# we need space for bitmap display 
+spots: .space 64
+# Array of 16 colors 4 byte per colors
+colors:
+	.word RED
+	.word RED
+	.word GREEN
+	.word GREEN
+	.word BLUE
+	.word BLUE
+	.word WHITE
+	.word WHITE
+	.word YELLOW
+	.word YELLOW
+	.word CYAN
+	.word CYAN
+	.word PURPLE
+	.word PURPLE
+	.word GREY
+	.word GREY
+	
+
+# Array of 16 random positions 
+pos: .space 64
+
+# Array of hexadecimal keys
+keys: 
+	.word 0x00000011 # 0 pos 1
+	.word 0x00000021 # 1 pos 2
+	.word 0x00000041 # 2 pos 3
+	.word 0xffffff81 # 3 pos 4
+	.word 0x00000012 # 4 pos 5
+	.word 0x00000022 # 5 pos 6
+	.word 0x00000042 # 6 pos7
+	.word 0xffffff82 # 7 pos 8
+	.word 0x00000014 # 8 pos 9
+	.word 0x00000024 # 9 pos 10
+	.word 0x00000044 # 10 pos 11
+	.word 0xffffff84 # 11 pos 12
+ 	.word 0x00000018 # 12 pos 13
+	.word 0x00000028 # 13 pos 14
+	.word 0x00000048 # 14 pos 15
+	.word 0xffffff88 # 15 pos 16
+	
+# Game start message
+start: .asciz "Game start!"
+.text
+main:
+# Check if all pairs have been lifted
+	li t5, 8
+	li t6, 0
+# Just black
+	li s5, BLACK
+# Set up the position array using subroutine
+	jal setup_position_array
+# Alert player setup is done
+	li a7, 4
+	la a0, start
+	ecall
+# Set up a global bit for addressing the number of times player press the keys 
+	li s9, 2
+# s10 and s11 will follow the address of the first color option and second color options
+# Set up 2 global bits storing the keycode of the press keys
+# Handling interruptions
+	la t0, handler
+	csrrs   zero, utvec, t0 
+     
+	# Set the UEIE (User External Interrupt Enable) bit in UIE register 
+	li      t1, 0x100 
+	csrrs   zero, uie, t1       # uie - ueie bit (bit 8) 
+	# Set the UIE (User Interrupt Enable) bit in USTATUS register 
+	csrrsi  zero, ustatus, 0x1  # ustatus - enable uie (bit 0) 
+ 
+	# Enable the interrupt of keypad of Digital Lab Sim 
+	li t1, IN_ADDRESS_HEXA_KEYBOARD 
+	li t3, 0x80  # bit 7 = 1 to enable interrupt    
+	sb t3, 0(t1)
+	
+#end of the game, ask if the player wants to play again
+check_status:
+	beq t6, t5, end_main
+sleep:
+	addi a7, zero, 32
+	li a0, 300 # Pause for 300 ms
+	ecall
+	j check_status
+end_main:
+	li a7, 50
+	la a0, msg
+	ecall
+	beq a0, zero, main
+end_game:
+	li a7, 10
+	ecall
+
+#subroutine to create random position arrays
+setup_position_array:
+	#storing the program's current state
+	addi sp, sp, -28
+	sw s0, 0(sp)
+	sw t0, 4(sp)
+	sw t1, 8(sp)
+	sw t2, 12(sp)
+	sw t3, 16(sp)
+	sw t4, 20(sp)
+	sw ra, 24(sp)
+	
+	la s0, pos
+	li t0, 0
+	li t1, 16
+setup_loop:
+	# check if all the position has been filled 
+	beq t0, t1, end_setup_loop 
+	# system call to generate a random number from 0 to 16
+	li a7, 42
+	li a1, 17
+	ecall
+	add t3, zero, s0 # t3 holds the address of position t3 resets every loop
+check_setup__loop:
+	lw t4, 0(t3) # s1 store visited[i]
+	beq a0, t4, setup_loop # if a0 is already a position, new random number
+	beq t4, zero, insert # if we never encounnter this position, insert into the next index with value 0
+	addi t3, t3, 4 # check the next element in the pos array
+	j check_setup__loop
+insert:
+	sw a0, 0(t3)
+	addi t0, t0, 1 # one more postion filled
+	j setup_loop
+end_setup_loop:
+	# restore all ragisters for later use
+	lw s0, 0(sp)
+	lw t0, 4(sp)
+	lw t1, 8(sp)
+	lw t2, 12(sp)
+	lw t3, 16(sp)
+	lw t4, 20(sp)
+	lw ra, 24(sp)
+	addi sp, sp, 28
+	# go back to the main program
+	jr ra
+#EndOfSetup_Subroutine
+
+#subroutine to handle the interrupt when a key is pressed by the user
+handler:
+	#storing all commonly used registers for main program
+	addi sp, sp, -28
+	sw a0, 0(sp)
+	sw t0, 4(sp)
+	sw t1, 8(sp)
+	sw t2, 12(sp)
+	sw s0, 16(sp)
+	sw s1, 20(sp)
+	sw s2, 24(sp)
+	
+	#use t0 for row index (check rows in digital lab sim keyboard)
+	li t0, 0
+check_rows:
+	#re enable the interrupt
+	li t1, IN_ADDRESS_HEXA_KEYBOARD
+	li t2, 0x80 # re-enable interrupts (bit 7)
+	or t2, t2, t0 # Combine with row index to select the row
+	sb t2, 0(t1) # read the input from keyboard
+	
+	li t1, OUT_ADDRESS_HEXA_KEYBOARD
+	lb t2, 0(t1) # read the keycode into t2
+	
+	beq t2, zero, next_row # if the keycode is zero, we move to next row to check
+	
+	mv s0, t2 # s0 will be the temporary holder of the keycode
+	# use s0
+	
+	jal get_pos # jump to get_pos subroutine
+
+	j end_handler
+# we have the key values in t2
+next_row:
+	addi t0, t0, 1
+	li t1, 16
+	blt t0, t1, check_rows
+
+end_handler:
+	# Restore saved register
+	lw s2, 24(sp)
+	lw s1, 20(sp)
+	lw s0, 16(sp)
+	lw t2, 12(sp)
+	lw t1, 8(sp)
+	lw t0, 4(sp)
+	lw a0, 0(sp)
+	addi sp, sp, 28
+	
+	# return from interrupt
+	uret
+
+# Subroutine to check the position of the hexadecimal keys pressed (converting the keycode into hexadecimal values)
+get_pos:
+	#storing all commonly used registers for handler
+	addi sp, sp, -32
+	sw ra, 0(sp)
+	sw a0, 4(sp)
+	sw t0, 8(sp)
+	sw t1, 12(sp)
+	sw t2, 16(sp)
+	sw s0, 20(sp)
+	sw s1, 24(sp)
+	sw s2, 28(sp)
+	
+	la t0, keys # t0 is now base address of keys (keys[0])
+	li t2, 1 # the index and we can also return this as a decimal corresponding to the key pressed
+	
+get_pos_loop:
+	lw t1, 0(t0) # t1 = keys[i]
+	beq t1, s0, end_get_pos_loop # if t1 = s0, means that we got the keycode right, we return t2 as the decimal position
+	addi t2, t2, 1
+	addi t0, t0, 4
+	j get_pos_loop
+end_get_pos_loop:
+	# We pressed a key then we subtract the number of time we can press a key (each turn player can press a key twice
+	addi s9, s9, -1
+	# we have output the desired position in t2
+	jal find_color # find the first color
+end_get_pos:
+	# restore 
+	lw ra, 0(sp)
+	lw a0, 4(sp)
+	lw t0, 8(sp)
+	lw t1, 12(sp)
+	lw t2, 16(sp)
+	lw s0, 20(sp)
+	lw s1, 24(sp)
+	lw s2, 28(sp)
+	addi sp, sp, 32
+	
+	jr ra #return to the handler
+	
+# subrountine to find the index in the colors array corresponding to the position in the random pos array
+find_color:
+	# t is the position on the display
+	addi, sp, sp, -40
+	sw ra, 0(sp)
+	sw t0, 4(sp)
+	sw t1, 8(sp)
+	sw t2, 12(sp)
+	sw t3, 16(sp)
+	sw t4, 20(sp)
+	sw a0, 24(sp)
+	sw a1, 28(sp)
+	sw a2, 32(sp)
+	sw ra, 36(sp)
+	
+	la t0, pos # base address of random position array
+	li t3, 1
+	
+find_color_pos_loop:
+	lw t1, 0(t0) # t1 stores the value in the pos array
+	beq t1, t2, find_color_pos_loop_end # if t1 matches t2 we find the color using t3, which is the index of t1
+	addi t0, t0, 4
+	addi t3, t3, 1 #t3 stores the position of the color in the colors array
+	j find_color_pos_loop
+find_color_pos_loop_end:
+	# now we have t3 as the index of the color in the colors array
+	la t0, colors
+get_color:
+	addi t3, t3, -1
+	li s3, 4
+	mul t3, t3, s3
+	add t0, t0, t3
+print_color:
+	lw a1, 0(t0) # a1 is the color we need
+	li a0, MONITOR_SCREEN
+	# t2 is the decimal position on the keyboard
+	addi t2, t2, -1
+	li s3, 4
+	mul t2, t2, s3
+	# move to the position desired on the bitmap display
+	add a0, a0, t2 
+	beq s9, zero, print_second_color
+	mv s10, a0 # s10 stores the address of the bitmap display position of the first color
+	sw a1, 0(a0)
+	j find_color_end
+print_second_color:
+	mv s11, a0 # s11 stores the address of the bitmap display position of the second color
+	sw a1, 0(a0)
+	# pause for the player to see
+	addi a7, zero, 32
+	li a0, 300 # Pause for 300 ms
+	ecall
+	addi s9, s9, 2 # restore s9 to 2
+	j check_match
+	#now we need to chekc if these 2 colors match
+check_match:
+	lw s7, 0(s10)
+	lw s8, 0(s11)
+	bne s7, s8, set_black_screen
+	addi t6, t6, 1
+	j find_color_end
+set_black_screen:
+	sw s5, 0(s10)
+	sw s5, 0(s11)
+	li s10, 0
+	li s11, 0
+find_color_end:
+	#retore registers
+	lw t0, 4(sp)
+	lw t1, 8(sp)
+	lw t2, 12(sp)
+	lw t3, 16(sp)
+	lw t4, 20(sp)
+	lw a0, 24(sp)
+	lw a1, 28(sp)
+	lw a2, 32(sp)
+	lw ra, 36(sp)
+	addi, sp, sp, 40
+	
+	jr ra
+
+#---------------------------
+	
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	
+
+
